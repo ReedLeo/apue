@@ -2,7 +2,9 @@ CFLAGS += -g -ggdb -g3 -gdwarf-4 -Og -w
 
 all:
 
-process_basic: process_basic.c
+# process_basic: process_basic.c
+# 	$(CC) $^ $(CFLAGS) -o $@
+% : %.c
 	$(CC) $^ $(CFLAGS) -o $@
 
 clean:
