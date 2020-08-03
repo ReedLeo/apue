@@ -1,0 +1,1 @@
+CFLAGS += -g -g3 -ggdb -gdwarf-4 -Og -Wall
