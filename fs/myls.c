@@ -61,17 +61,24 @@ char* parse_file_mode(const mode_t st_mode)
 /**
  * Print file status accroding to the mode.
 */
-void print_by_mode(const char* p_file_name, const struct stat* p_stbuf, const int mode)
+void print_by_mode(const char* p_full_path, const struct stat* p_stbuf, const int mode)
 {
     static char out_str_buf[PATH_MAX] = {0};
     static char time_fmt_buf[PATH_MAX] = {0};
     char* p_mode_str = NULL;
+    const char* p_file_name = NULL;
     struct tm* p_st_tm = NULL;
     size_t prefix_len = 0;
     assert(p_stbuf);
 
     out_str_buf[0] = '\0';
     time_fmt_buf[0] = '\0';
+
+    // get filename without prefix path
+    p_file_name = strrchr(p_full_path, '/');
+    p_file_name = p_file_name ? p_file_name : p_full_path;
+    ++p_file_name;  // go pass over the last '/'
+
     if (mode & TR_INODE)
     {
         sprintf(out_str_buf, "%ld ", p_stbuf->st_ino);
@@ -90,7 +97,7 @@ void print_by_mode(const char* p_file_name, const struct stat* p_stbuf, const in
         strftime(time_fmt_buf, sizeof(time_fmt_buf), "%b %e %Y %H:%M", p_st_tm);
         p_mode_str = parse_file_mode(p_stbuf->st_mode);
         assert(p_mode_str);
-        sprintf(out_str_buf + prefix_len, "%s %ld %s %s %ld %s %s\n"
+        sprintf(out_str_buf + prefix_len, "%s %ld %s %s %4ld %s %s\n"
             , p_mode_str
             , p_stbuf->st_nlink
             , getpwuid(p_stbuf->st_uid)->pw_name
@@ -111,8 +118,10 @@ void print_by_mode(const char* p_file_name, const struct stat* p_stbuf, const in
  */
 void traverse(const char* path, const int mode)
 {
+    static char new_path[PATH_MAX] = {0};
     struct stat stbuf = {0};
     const char* p_file_name = NULL;
+    glob_t glob_res = {0};
 
     if (lstat(path, &stbuf) < 0)
     {
@@ -123,12 +132,55 @@ void traverse(const char* path, const int mode)
     // is a normal file
     if (S_ISDIR(stbuf.st_mode) == 0)
     {
-        p_file_name = strrchr(path, '/');
-        if (p_file_name == NULL)
-            p_file_name = path;
         print_by_mode(p_file_name, &stbuf, mode);
         return;
     }
+
+    // is a directory
+    strncpy(new_path, path, PATH_MAX);
+    strncat(new_path, "/*", PATH_MAX - strlen(new_path));
+    glob(new_path, 0, NULL, &glob_res);
+
+    // strncpy(new_path, path, PATH_MAX);
+    // strncat(new_path, "/.*", PATH_MAX-strlen(new_path));
+    // glob(new_path, GLOB_APPEND, NULL, &glob_res);
+
+    for (int i = 0; i < glob_res.gl_pathc && glob_res.gl_pathv[i]; ++i)
+    {
+        // puts(glob_res.gl_pathv[i]);
+        p_file_name = strrchr(glob_res.gl_pathv[i], '/');
+        if (NULL == p_file_name)
+        {
+            perror("strrchr()");
+            exit(1);
+        }
+        if (lstat(glob_res.gl_pathv[i], &stbuf) < 0)
+        {
+            perror("lstat()");
+            exit(1);
+        }
+        print_by_mode(glob_res.gl_pathv[i], &stbuf, mode);
+    }
+
+    if (mode & TR_RECUR)
+    {
+        for (int i = 0; i < glob_res.gl_pathc; i++)
+        {
+            if (lstat(glob_res.gl_pathv[i], &stbuf) < 0)
+            {
+                perror("lstat()");
+                exit(1);
+            }
+            if (S_ISDIR(stbuf.st_mode))
+            {
+                puts("");
+                print_by_mode(glob_res.gl_pathv[i], &stbuf, 0);
+                puts(":");
+                traverse(glob_res.gl_pathv[i], mode);
+            }
+        }
+    }
+    globfree(&glob_res);
 }
 
 int main(int argc, char** argv)
