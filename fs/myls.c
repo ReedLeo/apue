@@ -17,6 +17,20 @@
 #define TR_INODE    1
 #define TR_LONG     2
 #define TR_RECUR    4
+#define TR_ALL      8
+
+#define MAX(x, y) (((x) > (y)) ? (x) : (y)) 
+
+int get_width(off_t num)
+{
+    int cnt = 0;
+    while (num)
+    {
+        ++cnt;
+        num /= 10;
+    }
+    return cnt;
+}
 
 char* parse_file_mode(const mode_t st_mode)
 {
@@ -61,7 +75,7 @@ char* parse_file_mode(const mode_t st_mode)
 /**
  * Print file status accroding to the mode.
 */
-void print_by_mode(const char* p_full_path, const struct stat* p_stbuf, const int mode)
+void print_by_mode(const char* p_full_path, const struct stat* p_stbuf, const int mode, int fmt_ln_width ,int fmt_sz_width)
 {
     static char out_str_buf[PATH_MAX] = {0};
     static char time_fmt_buf[PATH_MAX] = {0};
@@ -90,19 +104,19 @@ void print_by_mode(const char* p_full_path, const struct stat* p_stbuf, const in
         p_st_tm = localtime(&p_stbuf->st_mtim.tv_sec);
         if (p_st_tm == NULL)
         {
-            perror("local()");
+            perror("localtime()");
             exit(1);
         }
 
         strftime(time_fmt_buf, sizeof(time_fmt_buf), "%b %e %Y %H:%M", p_st_tm);
         p_mode_str = parse_file_mode(p_stbuf->st_mode);
         assert(p_mode_str);
-        sprintf(out_str_buf + prefix_len, "%s %ld %s %s %4ld %s %s\n"
+        sprintf(out_str_buf + prefix_len, "%s %*ld %s %s %*ld %s %s\n"
             , p_mode_str
-            , p_stbuf->st_nlink
+            , fmt_ln_width, p_stbuf->st_nlink
             , getpwuid(p_stbuf->st_uid)->pw_name
             , getpwuid(p_stbuf->st_gid)->pw_name
-            , p_stbuf->st_size
+            , fmt_sz_width, p_stbuf->st_size
             , time_fmt_buf      //"Replace by time format"
             , p_file_name);
     }
@@ -118,69 +132,95 @@ void print_by_mode(const char* p_full_path, const struct stat* p_stbuf, const in
  */
 void traverse(const char* path, const int mode)
 {
-    static char new_path[PATH_MAX] = {0};
+    char new_path[PATH_MAX] = {0};
     struct stat stbuf = {0};
-    const char* p_file_name = NULL;
-    glob_t glob_res = {0};
+    struct stat* p_stbuf_arr = NULL;
+    struct dirent** name_list;
+    int file_count = 0;
+    int max_sz_width = 0;
+    int max_ln_width = 0;
 
     if (lstat(path, &stbuf) < 0)
     {
-        perror("stat()");
+        perror("lstat()");
         exit(1);
     }
 
     // is a normal file
     if (S_ISDIR(stbuf.st_mode) == 0)
     {
-        print_by_mode(p_file_name, &stbuf, mode);
+        print_by_mode(path, &stbuf, mode, 0, 0);
+        if ((mode & TR_LONG) == 0)
+            puts("");
         return;
     }
 
     // is a directory
-    strncpy(new_path, path, PATH_MAX);
-    strncat(new_path, "/*", PATH_MAX - strlen(new_path));
-    glob(new_path, 0, NULL, &glob_res);
+    // strncpy(new_path, path, PATH_MAX);
+    // strncat(new_path, "/*", PATH_MAX - strlen(new_path));
+    // glob(new_path, 0, NULL, &glob_res);
+
+    file_count = scandir(path, &name_list, NULL, alphasort);
+    if (file_count < 0 || NULL == name_list)
+    {
+        perror("scandir()");
+        exit(1);
+    }
 
     // strncpy(new_path, path, PATH_MAX);
     // strncat(new_path, "/.*", PATH_MAX-strlen(new_path));
     // glob(new_path, GLOB_APPEND, NULL, &glob_res);
-
-    for (int i = 0; i < glob_res.gl_pathc && glob_res.gl_pathv[i]; ++i)
+    p_stbuf_arr = malloc(file_count * sizeof(*p_stbuf_arr));
+    if ( NULL == p_stbuf_arr )
     {
-        // puts(glob_res.gl_pathv[i]);
-        p_file_name = strrchr(glob_res.gl_pathv[i], '/');
-        if (NULL == p_file_name)
-        {
-            perror("strrchr()");
-            exit(1);
-        }
-        if (lstat(glob_res.gl_pathv[i], &stbuf) < 0)
+        perror("malloc()");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < file_count; ++i)
+    {
+        sprintf(new_path, "%s/%s", path, name_list[i]->d_name);
+        if (lstat(new_path, p_stbuf_arr + i) < 0)
         {
             perror("lstat()");
             exit(1);
         }
-        print_by_mode(glob_res.gl_pathv[i], &stbuf, mode);
+        max_sz_width = MAX(max_sz_width, get_width(p_stbuf_arr[i].st_size));
+        max_ln_width = MAX(max_ln_width, get_width(p_stbuf_arr[i].st_nlink));
+    }
+
+    for (int i = 0; i < file_count; ++i)
+    {
+        if ((mode & TR_ALL) == 0 && '.' == name_list[i]->d_name[0])
+            continue;
+        
+        sprintf(new_path, "%s/%s", path, name_list[i]->d_name);
+        print_by_mode(new_path, p_stbuf_arr + i, mode, max_ln_width, max_sz_width);
     }
 
     if (mode & TR_RECUR)
     {
-        for (int i = 0; i < glob_res.gl_pathc; i++)
+        for (int i = 0; i < file_count; i++)
         {
-            if (lstat(glob_res.gl_pathv[i], &stbuf) < 0)
+            if (S_ISDIR(p_stbuf_arr[i].st_mode) 
+                && strcmp(name_list[i]->d_name, ".")
+                && strcmp(name_list[i]->d_name, ".."))
             {
-                perror("lstat()");
-                exit(1);
-            }
-            if (S_ISDIR(stbuf.st_mode))
-            {
+                sprintf(new_path, "%s/%s", path, name_list[i]->d_name);
                 puts("");
-                print_by_mode(glob_res.gl_pathv[i], &stbuf, 0);
-                puts(":");
-                traverse(glob_res.gl_pathv[i], mode);
+                printf("%s:\n", new_path);
+                traverse(new_path, mode);
             }
         }
     }
-    globfree(&glob_res);
+
+    for (int i = 0; i < file_count; ++i)
+        free(name_list[i]);
+    
+    free(name_list);
+    free(p_stbuf_arr);
+    if ((mode & TR_LONG) == 0)
+        puts("");
 }
 
 int main(int argc, char** argv)
@@ -194,7 +234,6 @@ int main(int argc, char** argv)
         {
         case 'i':
             tr_mode |= TR_INODE;
-            puts("i");
             break;
 
         case 'l':
@@ -203,7 +242,10 @@ int main(int argc, char** argv)
 
         case 'R':
             tr_mode |= TR_RECUR;
-            puts("R");
+            break;
+        
+        case 'a':
+            tr_mode |= TR_ALL;
             break;
 
         default:

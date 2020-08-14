@@ -12,7 +12,13 @@ int main(int argc, char** argv)
     int file_count = 0; 
     struct dirent** name_list = NULL;
 
-    file_count = scandir(FN_NAME, &name_list, NULL, alphasort);
+    if (argc < 2)
+    {
+        fprintf(stderr, "Too few arguments.\n");
+        exit(1);
+    }
+
+    file_count = scandir(argv[1], &name_list, NULL, alphasort);
     if (file_count < 0 || name_list == NULL)
     {
         perror("scandir()");
