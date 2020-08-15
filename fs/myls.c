@@ -156,10 +156,6 @@ void traverse(const char* path, const int mode)
     }
 
     // is a directory
-    // strncpy(new_path, path, PATH_MAX);
-    // strncat(new_path, "/*", PATH_MAX - strlen(new_path));
-    // glob(new_path, 0, NULL, &glob_res);
-
     file_count = scandir(path, &name_list, NULL, alphasort);
     if (file_count < 0 || NULL == name_list)
     {
@@ -167,9 +163,6 @@ void traverse(const char* path, const int mode)
         exit(1);
     }
 
-    // strncpy(new_path, path, PATH_MAX);
-    // strncat(new_path, "/.*", PATH_MAX-strlen(new_path));
-    // glob(new_path, GLOB_APPEND, NULL, &glob_res);
     p_stbuf_arr = malloc(file_count * sizeof(*p_stbuf_arr));
     if ( NULL == p_stbuf_arr )
     {
