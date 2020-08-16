@@ -1,13 +1,20 @@
-#ifndef ANYTIMER_H__
-#define ANYTIMER_H__
+#ifndef at_H__
+#define at_H__
 
 #define TASK_MAX_NUM 1024
 
-#define AT_ST_PAUSE     0
-#define AT_ST_RUNNABLE  1
-#define AT_ST_CANCEL    2
+// #define AT_ST_PAUSE     0
+// #define AT_ST_RUNNABLE  1
+// #define AT_ST_CANCEL    2
 
-typedef void (*anytimer_handler_t)(void*);
+typedef enum at_status_enum
+{
+    AT_ST_PAUSE     =   0,
+    AT_ST_RUNNABLE  =   1,
+    AT_ST_CANCEL    =   2
+} at_status_enum;
+
+typedef void (*at_handler_t)(void*);
 
 /**
  * @description: 
@@ -21,7 +28,8 @@ int at_init();
 /**
  * @description: Try to add a new task for scheduling.
  * @param :
- *      anytimer_handler_t handler, the procedure of task
+ *      at_handler_t handler, the procedure of task
+ *      void* args, the argument of handler
  *      interval, time in second before the handler begin to run.
  *      status, the inital status of task, which can be AT_ST_PAUSE, AT_ST_RUNNABLE or AT_ST_CANCEL
  * @return {int}  
@@ -29,7 +37,7 @@ int at_init();
  *      -ENOMEM, There is no space for new task.
  *      -EXFULL, The task descriptor table is full.
  */
-int at_add_task(anytimer_handler_t handler, const int inverval, const int status);
+int at_add_task(at_handler_t handler, void* args, const int inverval, at_status_enum status);
 
 /**
  * @description: 

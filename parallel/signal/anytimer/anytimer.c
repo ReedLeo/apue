@@ -7,21 +7,23 @@
 
 #include "anytimer.h"
 
-#define CHECK_PTR(ptr)\
-if (ptr == NULL) \
+#define CHECK_TD(td)\
+if (td <= 0) \
 {\
-    fprintf(stderr, "%s: task pointer cannot be null.\n", __FUNCTION__);\
-    exit(EXIT_FAILURE);\
+    fprintf(stderr, "%s: invalid task descriptor.\n", __FUNCTION__);\
+    return -EINVAL;\
 }
 
 #define IS_RUNNABLE(ptsk) ((ptsk->task_status) & (AT_ST_RUNNABLE))
 #define IS_CANCELED(ptsk) ((ptsk->task_status) & (AT_ST_CANCEL))
 #define IS_PAUSED(ptsk)   ((ptsk->task_status) & (AT_ST_PAUSE))
 
+#define SIGTSKFIN (SIGRTMIN + 1)
+
 typedef struct tmtask_st
 {
     int count_down; // count down in second.
-    anytimer_handler_t handler;
+    at_handler_t handler;
     void* args;     // handler's argument.
     int task_status;
     int self_pos;
@@ -79,19 +81,64 @@ static void module_load(void)
     atexit(module_unload);
 }
 
+static int rm_task(const int td)
+{
+    tmtask_st* ptsk = NULL;
+    CHECK_TD(td);
+
+    ptsk = gs_tasks_tbl[td];
+    gs_tasks_tbl[td] = 0;
+    free(ptsk);
+    return td;
+}
+
 int at_init()
 {
     if (!gs_inited)
     {
         module_load();
         gs_inited = 1;
+        return 0;
     }
-    return 0;
+    else
+    {
+        return -EAGAIN;
+    }
+    
 }
 
-int at_add_task(anytimer_handler_t const handler, const int interval, const int status)
+int at_add_task(at_handler_t const handler, void* args, const int interval, at_status_enum status)
 {
-    return 0;
+    int td = -1;
+    tmtask_st* ptsk = NULL;
+
+    if (handler == NULL || interval <= 0 
+        || (status != AT_ST_CANCEL 
+            && status != AT_ST_RUNNABLE
+            && status != AT_ST_PAUSE)
+        )
+        return -EINVAL;
+
+    td = get_free_pos();
+    if (td < 0)
+    {
+        return -EXFULL;
+    }
+
+    ptsk = malloc(sizeof(*ptsk));
+    if (ptsk == NULL)
+    {
+        return -ENOMEM;
+    }
+    gs_tasks_tbl[td] = ptsk;
+
+    ptsk->handler = handler;
+    ptsk->args = args;
+    ptsk->count_down =interval;
+    ptsk->self_pos = td;
+    ptsk->task_status = status;
+
+    return td;
 }
 
 /**
@@ -100,22 +147,70 @@ int at_add_task(anytimer_handler_t const handler, const int interval, const int 
  */
 int at_pause_task(int td)
 {
+    tmtask_st* ptsk = NULL;
+    CHECK_TD(td);
+    
+    ptsk = gs_tasks_tbl[td];
+    if (ptsk == NULL || IS_CANCELED(ptsk))
+    {
+        return -EINVAL;
+    }
+
+    if (IS_PAUSED(ptsk))
+        return -EAGAIN;
+    
+    ptsk->task_status = AT_ST_PAUSE;
     return 0;
 }
 
 int at_resume_task(int td)
 {
+    tmtask_st* ptsk = NULL;
+    CHECK_TD(td);
+    
+    ptsk = gs_tasks_tbl[td];
+    if (ptsk == NULL || IS_CANCELED(ptsk))
+    {
+        return -EINVAL;
+    }
+    
+    ptsk->task_status = AT_ST_RUNNABLE;
     return 0;
 }
 
 int at_cancel_task(const int td)
 {
+    tmtask_st* ptsk = NULL;
+    CHECK_TD(td);
+    
+    ptsk = gs_tasks_tbl[td];
+    if (ptsk == NULL)
+    {
+        return -EINVAL;
+    }
+
+    if (IS_CANCELED(ptsk))
+        return -EAGAIN;
+    
+    ptsk->task_status = AT_ST_CANCEL;
     return 0;
 }
 
 int at_wait_task(const int td)
 {
-    return 0;
+    tmtask_st* ptsk = NULL;
+    CHECK_TD(td);
+    
+    ptsk = gs_tasks_tbl[td];
+    if (ptsk == NULL)
+    {
+        return -EINVAL;
+    }
+
+    while (ptsk->task_status != AT_ST_CANCEL)
+        pause();    // how to wake up this pause()
+
+    return rm_task(td);
 }
 
 int at_destory()
