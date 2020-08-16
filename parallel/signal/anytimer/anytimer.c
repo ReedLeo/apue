@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
+#include <errno.h>
 
 #include "anytimer.h"
 
@@ -13,12 +14,16 @@ if (ptr == NULL) \
     exit(EXIT_FAILURE);\
 }
 
+#define IS_RUNNABLE(ptsk) ((ptsk->task_status) & (AT_ST_RUNNABLE))
+#define IS_CANCELED(ptsk) ((ptsk->task_status) & (AT_ST_CANCEL))
+#define IS_PAUSED(ptsk)   ((ptsk->task_status) & (AT_ST_PAUSE))
+
 typedef struct tmtask_st
 {
-    int itv_sec;    // interval in second
-    int count_down; // count down in second
+    int count_down; // count down in second.
     anytimer_handler_t handler;
-    int task_enable;
+    void* args;     // handler's argument.
+    int task_status;
     int self_pos;
 } tmtask_st;
 
@@ -42,14 +47,14 @@ static void task_sched(int signum)
 
     for (int i = 0; i < TASK_MAX_NUM; ++i)
     {
-        if (gs_tasks_tbl[i] && gs_tasks_tbl[i]->task_enable)
+        if (gs_tasks_tbl[i] && IS_RUNNABLE(gs_tasks_tbl[i]))
         {
             p_task = gs_tasks_tbl[i];
             --p_task->count_down;
             if (p_task->count_down <= 0)
             {
-                p_task->handler(signum);
-                p_task->count_down = p_task->itv_sec;
+               p_task->handler(p_task->args);
+               p_task->task_status = AT_ST_CANCEL;
             }
         }
     }
@@ -74,7 +79,7 @@ static void module_load(void)
     atexit(module_unload);
 }
 
-int anytimer_init()
+int at_init()
 {
     if (!gs_inited)
     {
@@ -84,61 +89,46 @@ int anytimer_init()
     return 0;
 }
 
-anytask_t* anytimer_add_task(anytimer_handler_t const handler, const int interval, const int enable)
+int at_add_task(anytimer_handler_t const handler, const int interval, const int status)
 {
-    tmtask_st* p_task = NULL;
-    int pos = -1;
-
-    if (handler == NULL || interval < 0)
-        return NULL;
-
-    pos = get_free_pos();
-    if (pos < 0)
-        return NULL;
-    
-    p_task = malloc(sizeof(tmtask_st));
-    if (p_task == NULL)
-    {
-        return NULL;
-    }
-
-    gs_tasks_tbl[pos] = p_task;
-    p_task->itv_sec = interval;
-    p_task->count_down = interval;
-    p_task->handler = handler;
-    p_task->self_pos = pos;
-    p_task->task_enable = enable;
-    
-    return p_task;
+    return 0;
 }
 
 /**
  *  0 -- disable
  *  non-zero -- enable 
  */
-int anytimer_enable_task(anytask_t* const p_task, const int enable)
+int at_pause_task(int td)
 {
-    tmtask_st *ptsk = p_task;
-    CHECK_PTR(ptsk);
-    ptsk->task_enable = enable;
     return 0;
 }
 
-int anytimer_remove_task(anytask_t* const p_task)
+int at_resume_task(int td)
 {
-    tmtask_st *ptsk = p_task;
-    CHECK_PTR(ptsk);
-    gs_tasks_tbl[ptsk->self_pos] = NULL;
-    free(ptsk);
-    ptsk = NULL;
     return 0;
 }
 
-void anytimer_destory()
+int at_cancel_task(const int td)
+{
+    return 0;
+}
+
+int at_wait_task(const int td)
+{
+    return 0;
+}
+
+int at_destory()
 {
     if (gs_inited)
     {
         module_unload();
         gs_inited = 0;
+        return 0;
     }
+    else
+    {
+        return -EAGAIN;
+    }
+    
 }
