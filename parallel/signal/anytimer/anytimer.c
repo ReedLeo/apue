@@ -70,6 +70,7 @@ static void task_sched(int signum)
 
 static void module_unload(void)
 {   
+    sigprocmask(SIG_SETMASK, &gs_saved_set, NULL);
     signal(SIGTSKFIN, gs_old_fintsk_handler);
     signal(SIGALRM, gs_old_alrm_handler);
     alarm(0);
@@ -222,12 +223,9 @@ int at_wait_task(const int td)
         return -EINVAL;
     }
 
-    //sigprocmask(SIG_UNBLOCK, &gs_block_set, &gs_old_set);
-    printf("wait task descriptor: %d\n", td);
     while (ptsk->task_status != AT_ST_CANCEL)
         sigsuspend(&gs_old_set);    // how to wake up this pause()
-    puts("Received a rt_signal.");
-    sigprocmask(SIG_SETMASK, &gs_saved_set, NULL);
+    //sigprocmask(SIG_SETMASK, &gs_saved_set, NULL);
     return rm_task(td);
 }
 

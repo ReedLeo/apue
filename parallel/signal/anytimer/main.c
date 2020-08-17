@@ -1,3 +1,11 @@
+/*
+ * @Author: your name
+ * @Date: 2020-08-17 08:41:52
+ * @LastEditTime: 2020-08-17 15:55:33
+ * @LastEditors: Please set LastEditors
+ * @Description: In User Settings Edit
+ * @FilePath: /apue/parallel/signal/anytimer/main.c
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,9 +69,9 @@ int main(int argc, char** argv)
             exit(EXIT_FAILURE);
         }
     }
-
-    getchar();
     
+    getchar();
+
     for (int i = 0; i < TASK_NUM; ++i)
     {    
         if ((ret = at_wait_task(td_arr[i]))< 0)
@@ -71,6 +79,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "at_wait_task failed with %s\n", strerror(-ret));
             exit(EXIT_FAILURE);
         }
+        printf("task %d terminated.\n", i);
     }
     at_destory();
     puts("End!!");
