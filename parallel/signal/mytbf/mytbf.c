@@ -28,7 +28,7 @@ typedef struct mytbf_st
 } mytbf_st;
 
 static mytbf_st* gs_tkbucket_arr[MYTBF_MAX];
-static sig_t gs_old_sighandler;
+static sig_t gs_old_alrm_handler;
 
 static int get_free_pos(void)
 {
@@ -63,7 +63,7 @@ static void alrm_handler(int arg)
 
 static void module_unload(void)
 {
-    signal(SIGALRM, gs_old_sighandler);
+    signal(SIGALRM, gs_old_alrm_handler);
     alarm(0);
     for (int i = 0; i < MYTBF_MAX; ++i)
         free(gs_tkbucket_arr[i]);
@@ -71,7 +71,7 @@ static void module_unload(void)
 
 static void module_load(void)
 {
-    gs_old_sighandler = signal(SIGALRM, alrm_handler);
+    gs_old_alrm_handler = signal(SIGALRM, alrm_handler);
     alarm(1);
     atexit(module_unload);
 }

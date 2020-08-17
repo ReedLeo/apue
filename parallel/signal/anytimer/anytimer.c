@@ -8,7 +8,7 @@
 #include "anytimer.h"
 
 #define CHECK_TD(td)\
-if (td <= 0) \
+if (td < 0) \
 {\
     fprintf(stderr, "%s: invalid task descriptor.\n", __FUNCTION__);\
     return -EINVAL;\
@@ -30,7 +30,11 @@ typedef struct tmtask_st
 } tmtask_st;
 
 static tmtask_st* gs_tasks_tbl[TASK_MAX_NUM];
-static sig_t gs_old_sighandler;
+static sig_t gs_old_alrm_handler;
+static sig_t gs_old_fintsk_handler;
+static sigset_t gs_block_set;
+static sigset_t gs_old_set;
+static sigset_t gs_saved_set;
 static int gs_inited;
 
 static int get_free_pos(void)
@@ -57,6 +61,7 @@ static void task_sched(int signum)
             {
                p_task->handler(p_task->args);
                p_task->task_status = AT_ST_CANCEL;
+               raise(SIGTSKFIN);
             }
         }
     }
@@ -64,8 +69,9 @@ static void task_sched(int signum)
 }
 
 static void module_unload(void)
-{
-    signal(SIGALRM, gs_old_sighandler);
+{   
+    signal(SIGTSKFIN, gs_old_fintsk_handler);
+    signal(SIGALRM, gs_old_alrm_handler);
     alarm(0);
     for (int i = 0; i < TASK_MAX_NUM; ++i)
     {
@@ -76,7 +82,16 @@ static void module_unload(void)
 
 static void module_load(void)
 {
-    gs_old_sighandler = signal(SIGALRM, task_sched);
+    gs_old_fintsk_handler = signal(SIGTSKFIN, SIG_IGN);
+    sigemptyset(&gs_block_set);
+    sigaddset(&gs_block_set, SIGTSKFIN);
+    sigprocmask(SIG_UNBLOCK, &gs_block_set, &gs_saved_set);
+    if (sigprocmask(SIG_BLOCK, &gs_block_set, &gs_old_set) < 0)
+    {
+        perror("sigprocmask()");
+        exit(EXIT_FAILURE);
+    }
+    gs_old_alrm_handler = signal(SIGALRM, task_sched);
     alarm(1);
     atexit(module_unload);
 }
@@ -207,9 +222,12 @@ int at_wait_task(const int td)
         return -EINVAL;
     }
 
+    //sigprocmask(SIG_UNBLOCK, &gs_block_set, &gs_old_set);
+    printf("wait task descriptor: %d\n", td);
     while (ptsk->task_status != AT_ST_CANCEL)
-        pause();    // how to wake up this pause()
-
+        sigsuspend(&gs_old_set);    // how to wake up this pause()
+    puts("Received a rt_signal.");
+    sigprocmask(SIG_SETMASK, &gs_saved_set, NULL);
     return rm_task(td);
 }
 
