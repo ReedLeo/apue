@@ -29,7 +29,7 @@ typedef struct mytbf_st
 } mytbf_st;
 
 static mytbf_st* gs_tkbucket_arr[MYTBF_MAX];
-static sig_t gs_old_alrm_handler;
+static struct sigaction gs_old_sigact;
 static struct itimerval gs_old_itv;
 
 static int get_free_pos(void)
@@ -47,10 +47,13 @@ static int min(int a, int b)
     return a < b ? a : b;
 }
 
-static void alrm_handler(int arg)
+static void alrm_handler(int signum, siginfo_t* p_sginf, void* p_numb)
 {
     mytbf_st* p_tbf = NULL;
-    //alarm(1);
+
+    if (p_sginf->si_code != SI_KERNEL)
+        return;
+
     for (int i = 0; i < MYTBF_MAX; ++i)
     {
         p_tbf = gs_tkbucket_arr[i];
@@ -65,7 +68,7 @@ static void alrm_handler(int arg)
 
 static void module_unload(void)
 {
-    signal(SIGALRM, gs_old_alrm_handler);
+    sigaction(SIGALRM, &gs_old_sigact, NULL);
     setitimer(ITIMER_REAL, &gs_old_itv, NULL);
     for (int i = 0; i < MYTBF_MAX; ++i)
         free(gs_tkbucket_arr[i]);
@@ -74,12 +77,22 @@ static void module_unload(void)
 static void module_load(void)
 {
     struct itimerval itv = {0};
-    gs_old_alrm_handler = signal(SIGALRM, alrm_handler);
+    struct sigaction sigact = {0};
+
+    sigact.sa_sigaction = alrm_handler;
+    sigact.sa_flags = 0;
+    sigact.sa_flags |= SA_SIGINFO;
+    sigemptyset(&sigact.sa_mask);   // block nonthing
+
+    if (sigaction(SIGALRM, &sigact, &gs_old_sigact) < 0)
+    {
+        perror("sigaction()");
+        exit(1);
+    }
 
     itv.it_interval.tv_sec = 1;
     itv.it_value.tv_sec = 1;
     setitimer(ITIMER_REAL, &itv , &gs_old_itv);
-    //alarm(1);
     atexit(module_unload);
 }
 
@@ -110,8 +123,7 @@ mytbf_t* mytbf_init(int cps, int burst)
     if (!init)
     {
         module_load();
-        init = 1;
-        
+        init = 1;   
     }
 
     return p_cur;
@@ -120,6 +132,7 @@ mytbf_t* mytbf_init(int cps, int burst)
 int mytbf_fetch_token(mytbf_t* p_tbf, int request)
 {   
     int token_got = 0;
+
     CHECK_PTR(p_tbf);
     mytbf_st* p_cur = (mytbf_st*)p_tbf;
 
@@ -127,7 +140,7 @@ int mytbf_fetch_token(mytbf_t* p_tbf, int request)
         return -EINVAL;
     
     while (p_cur->mt_token <= 0)
-        pause();
+        sigsuspend(NULL);   // replaced pause()
 
     token_got = min(request, p_cur->mt_token);
     p_cur->mt_token -= token_got;
