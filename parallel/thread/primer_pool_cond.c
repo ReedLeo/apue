@@ -88,6 +88,10 @@ int main(int argc, char** argv)
         pthread_join(tids[i], NULL);
     }
 
+    pthread_cond_destroy(&gs_cond_num_consumed);
+    pthread_cond_destroy(&gs_cond_num_produced);
+    pthread_mutex_unlock(&gs_mut_num);
+    
     puts("End!!");
     return 0;
 }
