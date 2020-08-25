@@ -52,7 +52,7 @@ int main(int argc, char** argv)
     fd4 = open(TTY4, O_RDWR | O_NONBLOCK);
     error_handler_en(fd4, "open()");
 
-    res = rel_add(TTY3, TTY4);
+    res = rel_add(fd3, fd4);
     error_handler_en(res, "rel_add()");
 
     while (1)

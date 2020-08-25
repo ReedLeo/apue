@@ -42,7 +42,8 @@ struct rel_job_st
     time_t end_tm;
     struct fsm_st fsm12;
     struct fsm_st fsm21;
-    pthread_rwlock_t rwlock;
+    pthread_mutex_t mut_lock;
+    pthread_cond_t  con_lcok;
 };
 
 #define MAX_JOB_NUM 2
@@ -51,7 +52,7 @@ static pthread_mutex_t gs_mut_jobs = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t gs_tid_relayer;
 
 #define CHECK_JD(fd) \
-    if ((fd) < 0) return -EINVAL;
+    if ((fd) < 0 || (fd) >= (MAX_JOB_NUM)) return -EINVAL;
 
 static void fsm_driver(struct fsm_st* pfsm)
 {
@@ -140,7 +141,7 @@ static void* thr_relayer(void* arg)
                 continue;
             /* read lock of job entry */
 
-            pthread_rwlock_wrlock(&pcur->rwlock);
+            pthread_mutex_lock(&pcur->mut_lock);
             if (pcur->job_status == REL_JST_RUNNING)
             {
                 fsm_driver(&pcur->fsm12);
@@ -149,9 +150,10 @@ static void* thr_relayer(void* arg)
                 if (pcur->fsm12.status == FSM_ST_TERM && pcur->fsm21.status == FSM_ST_TERM)
                 {
                     pcur->job_status = REL_JST_OVER;
+                    pthread_cond_broadcast(&pcur->con_lcok);
                 }
             }
-            pthread_rwlock_unlock(&pcur->rwlock);
+            pthread_mutex_unlock(&pcur->mut_lock);
         }
         pthread_mutex_unlock(&gs_mut_jobs);
     }
@@ -234,7 +236,9 @@ int rel_add(int fd1, int fd2)
         return -errno;
     }
 
-    pthread_rwlock_init(&p_new_job->rwlock, NULL);
+    pthread_mutex_init(&p_new_job->mut_lock, NULL);
+    pthread_cond_init(&p_new_job->con_lcok, NULL);
+
     p_new_job->job_status = REL_JST_RUNNING;
     p_new_job->fd1 = fd1;
     p_new_job->fd2 = fd2;
@@ -265,7 +269,7 @@ int rel_add(int fd1, int fd2)
     {
         fcntl(p_new_job->fd1, F_SETFL, p_new_job->saved_fd_flg1);
         fcntl(p_new_job->fd2, F_SETFL, p_new_job->saved_fd_flg2);
-        pthread_rwlock_destroy(&p_new_job->rwlock);
+        pthread_mutex_destroy(&p_new_job->mut_lock);
         pthread_mutex_unlock(&gs_mut_jobs);
         free(p_new_job);
         return -ENOSPC;
@@ -279,58 +283,80 @@ int rel_add(int fd1, int fd2)
 
 int rel_cancel(int jid)
 {
+    struct rel_job_st* pcur = NULL;
     CHECK_JD(jid);
     
     pthread_mutex_lock(&gs_mut_jobs);
-    pthread_rwlock_wrlock(&gs_jobs[jid]->rwlock);
-    if (gs_jobs[jid]->job_status != REL_JST_RUNNING)
+    pcur = gs_jobs[jid];
+    pthread_mutex_unlock(&gs_mut_jobs);
+
+    if (pcur == NULL)
+        return -EINVAL;
+    
+    pthread_mutex_lock(&pcur->mut_lock);
+    if (pcur->job_status != REL_JST_RUNNING)
     {
-        pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
-        pthread_mutex_unlock(&gs_mut_jobs);
+        pthread_mutex_unlock(&pcur->mut_lock);
         return -EBUSY;
     }
-    gs_jobs[jid]->job_status = REL_JST_CANCELED;
-    pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
-    pthread_mutex_unlock(&gs_mut_jobs);
+    pcur->job_status = REL_JST_CANCELED;
+    pthread_mutex_unlock(&pcur->mut_lock);
 
     return 0;
 }
 
 int rel_wait(int jid)
 {
+    struct rel_job_st* pcur = NULL;
+
     CHECK_JD(jid);
+
+    pthread_mutex_lock(&gs_mut_jobs);
+    pcur = gs_jobs[jid];
+    pthread_mutex_unlock(&gs_mut_jobs);
+    
+    if (pcur == NULL)
+        return -EINVAL;
+    
+    pthread_mutex_lock(&pcur->mut_lock);
+    
+    while (pcur->job_status == REL_JST_RUNNING)
+        pthread_cond_wait(&pcur->con_lcok, &pcur->mut_lock);
+
+    pthread_mutex_unlock(&pcur->mut_lock);
 
     return 0;
 }
 
 int rel_stat(int jid, struct rel_stat_st* p_job_stat)
 {  
+    struct rel_job_st* pcur = NULL;
+
     CHECK_JD(jid);
     if (p_job_stat == NULL)
         return 0;
     
     pthread_mutex_lock(&gs_jobs);
-    if (gs_jobs[jid] == NULL)
-    {
-        pthread_mutex_unlock(&gs_jobs);
-        return -EINVAL;
-    }
-
-    pthread_rwlock_rdlock(&gs_jobs[jid]->rwlock);
-    
-    p_job_stat->count12 = gs_jobs[jid]->fsm12.comm_count;
-    p_job_stat->count21 = gs_jobs[jid]->fsm21.comm_count;
-    
-    p_job_stat->fd1 = gs_jobs[jid]->fd1;
-    p_job_stat->fd2 = gs_jobs[jid]->fd2;
-    
-    p_job_stat->state = gs_jobs[jid]->job_status;
-
-    p_job_stat->start_tm = gs_jobs[jid]->end_tm;
-    p_job_stat->end_tm = gs_jobs[jid]->end_tm;
-    
-    pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
+    pcur = gs_jobs[jid];    
     pthread_mutex_unlock(&gs_jobs);
+
+    if (pcur == NULL)
+        return -EINVAL;
+    
+    pthread_mutex_lock(&pcur->mut_lock);
+    
+    p_job_stat->count12 = pcur->fsm12.comm_count;
+    p_job_stat->count21 = pcur->fsm21.comm_count;
+    
+    p_job_stat->fd1 = pcur->fd1;
+    p_job_stat->fd2 = pcur->fd2;
+    
+    p_job_stat->state = pcur->job_status;
+
+    p_job_stat->start_tm = pcur->end_tm;
+    p_job_stat->end_tm = pcur->end_tm;
+    
+    pthread_mutex_unlock(&pcur->mut_lock);
 
     return 0;
 }
@@ -342,7 +368,10 @@ int rel_destory(int jid)
 
     pthread_mutex_lock(&gs_mut_jobs);
 
-    pthread_rwlock_destroy(&gs_jobs[jid]->rwlock);
+    pthread_cond_broadcast(&gs_jobs[jid]->con_lcok);
+    pthread_mutex_destroy(&gs_jobs[jid]->con_lcok);
+    pthread_mutex_destroy(&gs_jobs[jid]->mut_lock);
+
     free(gs_jobs[jid]);
     gs_jobs[jid] = NULL;
 

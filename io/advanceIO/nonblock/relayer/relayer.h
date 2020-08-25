@@ -61,7 +61,6 @@ int rel_cancel(int jid);
  * Return value:
  *  0, on success.
  *  -EINVAL, if job id is invalid.
- *  -EBUSY, the job has already been canceld.
 */
 int rel_wait(int jid);
 
