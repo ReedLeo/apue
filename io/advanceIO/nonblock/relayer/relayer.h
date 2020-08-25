@@ -1,13 +1,13 @@
 #ifndef __RELAYER_H__
 #define __RELAYER_H__
 
-#include <sys/time.h>
+#include <time.h>
 #include <stdint.h>
 
 enum rel_job_stat
 {
     REL_JST_RUNNING = 1,
-    REL_JST_STOP,
+    REL_JST_CANCELED,
     REL_JST_OVER
 };
 
@@ -19,8 +19,8 @@ struct rel_stat_st
     int fd2;
     int64_t count12;
     int64_t count21;
-    struct timeval start_tm;
-    struct timeval end_tm;
+    time_t start_tm;
+    time_t end_tm;
 };
 
 int rel_init();
@@ -28,9 +28,8 @@ int rel_init();
 /**
  * Description:
  *  Add a new relayer job, and returen the job descriptor if it succeeded.
- *  rel_add() uses two devices' name string, will open it with non-block mode.
+ *  rel_add() need 2 opened file's descriptor.
  *  if failed, it would return a negtive value of error number.
- *  rel_fadd() is same as rel_add, except using tow opened devices' file descriptors.
  * 
  * Return value:
  *  non-negtive, on success, the relayer job descriptor
@@ -39,8 +38,7 @@ int rel_init();
  *  -ENOSPC, the job descriptor table is full.
  *  and other negtive value of error number.
 */
-int rel_add(const char* p_dev_name1, const char* p_dev_name2);
-int rel_fadd(int fd1, int fd2);
+int rel_add(int fd1, int fd2);
 
 
 /**

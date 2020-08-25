@@ -14,8 +14,8 @@
 #include <errno.h>
 #include <assert.h>
 
-#define TTY1 "/dev/tty11"
-#define TTY2 "/dev/tty12"
+#define TTY1 "/dev/tty9"
+#define TTY2 "/dev/tty10"
 #define BUFSIZE 1024
 
 #define error_handler_msg(fd, msg)  \

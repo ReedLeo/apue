@@ -31,7 +31,7 @@
 
 int main(int argc, char** argv)
 {
-    int fd1, fd2;
+    int fd1, fd2, fd3, fd4;
     int res = 0;
 
     fd1 = open(TTY1, O_RDWR | O_NONBLOCK);
@@ -43,12 +43,18 @@ int main(int argc, char** argv)
     res = rel_init();
     error_handler_en(res, "rel_init()");
 
-    res = rel_fadd(fd1, fd2);
+    res = rel_add(fd1, fd2);
     error_handler_en(res, "rel_fadd()");
+
+    fd3 = open(TTY3, O_RDWR | O_NONBLOCK);
+    error_handler_en(fd3, "open()");
+
+    fd4 = open(TTY4, O_RDWR | O_NONBLOCK);
+    error_handler_en(fd4, "open()");
 
     res = rel_add(TTY3, TTY4);
     error_handler_en(res, "rel_add()");
-    
+
     while (1)
         pause();
 

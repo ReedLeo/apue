@@ -38,14 +38,20 @@ struct rel_job_st
     int saved_fd_flg2;
     int self_pos;
     enum rel_job_stat job_status;
+    time_t start_tm;
+    time_t end_tm;
     struct fsm_st fsm12;
     struct fsm_st fsm21;
     pthread_rwlock_t rwlock;
 };
 
-#define MAX_JOB_NUM 1024
+#define MAX_JOB_NUM 2
 static struct rel_job_st* gs_jobs[MAX_JOB_NUM];
-static pthread_mutex_t gs_mut_jobs;
+static pthread_mutex_t gs_mut_jobs = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t gs_tid_relayer;
+
+#define CHECK_JD(fd) \
+    if ((fd) < 0) return -EINVAL;
 
 static void fsm_driver(struct fsm_st* pfsm)
 {
@@ -134,16 +140,18 @@ static void* thr_relayer(void* arg)
                 continue;
             /* read lock of job entry */
 
-            pthread_rwlock_rdlock(&pcur->rwlock);
+            pthread_rwlock_wrlock(&pcur->rwlock);
             if (pcur->job_status == REL_JST_RUNNING)
             {
                 fsm_driver(&pcur->fsm12);
                 fsm_driver(&pcur->fsm21);
 
-                // TODO
+                if (pcur->fsm12.status == FSM_ST_TERM && pcur->fsm21.status == FSM_ST_TERM)
+                {
+                    pcur->job_status = REL_JST_OVER;
+                }
             }
             pthread_rwlock_unlock(&pcur->rwlock);
-            /* release the read lock of job entry*/
         }
         pthread_mutex_unlock(&gs_mut_jobs);
     }
@@ -160,32 +168,39 @@ static int get_free_pos_unlocked()
     return -1;
 }
 
+static void module_unload()
+{
+    pthread_cancel(gs_tid_relayer);
+    pthread_join(gs_tid_relayer, NULL);
+    puts("relayer: thread that drives the FSM is canceled.");
+    for (int i = 0; i < MAX_JOB_NUM; ++i)
+    {
+        rel_destory(i);
+    }
+    puts("relayer: module unloaded.");
+}
+
+static void module_load()
+{
+    int res = 0;
+    res = pthread_create(&gs_tid_relayer, NULL, thr_relayer, NULL);
+    if (res < 0)
+    {
+        fprintf(stderr, "pthread_create faild with %s\n", strerror(res));
+        exit(EXIT_FAILURE);
+    }
+    atexit(module_unload);
+}
+
 int rel_init()
 {
+    static pthread_once_t inited = PTHREAD_ONCE_INIT;
+    pthread_once(&inited, module_load);
     return 0;
 }
 
-int rel_add(const char* p_dev_name1, const char* p_dev_name2)
-{
-    int fd1, fd2;
 
-    if (p_dev_name1 == NULL || p_dev_name2 == NULL)
-    {
-        return -EINVAL;
-    }
-
-    fd1 = open(p_dev_name1, O_RDWR | O_NONBLOCK);
-    if (fd1 < 0)
-        return -errno;
-
-    fd2 = open(p_dev_name2, O_RDWR | O_NONBLOCK);
-    if (fd2 < 0)
-        return -errno;
-    
-    return rel_fadd(fd1, fd2);
-}
-
-int rel_fadd(int fd1, int fd2)
+int rel_add(int fd1, int fd2)
 {
     int pos = -1;
     struct rel_job_st* p_new_job = NULL;
@@ -200,13 +215,23 @@ int rel_fadd(int fd1, int fd2)
     p_new_job->saved_fd_flg1 = fcntl(fd1, F_GETFL);
     if (p_new_job->saved_fd_flg1 < 0)
     {
-        return errno;
+        return -errno;
+    }
+
+    if (fcntl(fd1, F_SETFL, O_NONBLOCK) < 0)
+    {
+        return -errno;
     }
 
     p_new_job->saved_fd_flg2 = fcntl(fd2, F_GETFL);
     if (p_new_job->saved_fd_flg2 < 0)
     {
-        return errno;
+        return -errno;
+    }
+
+    if (fcntl(fd2, F_SETFL, O_NONBLOCK) < 0)
+    {
+        return -errno;
     }
 
     pthread_rwlock_init(&p_new_job->rwlock, NULL);
@@ -229,6 +254,9 @@ int rel_fadd(int fd1, int fd2)
     p_new_job->fsm21.status = FSM_ST_READ;
     p_new_job->fsm21.comm_count = 0;
     p_new_job->fsm21.buf[0] = '\0';
+
+    p_new_job->start_tm = time(NULL);
+    p_new_job->end_tm = 0;
     
     /* critical section. need lock */
     pthread_mutex_lock(&gs_mut_jobs);
@@ -242,6 +270,7 @@ int rel_fadd(int fd1, int fd2)
         free(p_new_job);
         return -ENOSPC;
     }
+    gs_jobs[pos] = p_new_job;
     p_new_job->self_pos = pos;
     pthread_mutex_unlock(&gs_mut_jobs);
 
@@ -250,20 +279,74 @@ int rel_fadd(int fd1, int fd2)
 
 int rel_cancel(int jid)
 {
+    CHECK_JD(jid);
+    
+    pthread_mutex_lock(&gs_mut_jobs);
+    pthread_rwlock_wrlock(&gs_jobs[jid]->rwlock);
+    if (gs_jobs[jid]->job_status != REL_JST_RUNNING)
+    {
+        pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
+        pthread_mutex_unlock(&gs_mut_jobs);
+        return -EBUSY;
+    }
+    gs_jobs[jid]->job_status = REL_JST_CANCELED;
+    pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
+    pthread_mutex_unlock(&gs_mut_jobs);
+
     return 0;
 }
 
 int rel_wait(int jid)
 {
+    CHECK_JD(jid);
+
     return 0;
 }
 
 int rel_stat(int jid, struct rel_stat_st* p_job_stat)
-{
+{  
+    CHECK_JD(jid);
+    if (p_job_stat == NULL)
+        return 0;
+    
+    pthread_mutex_lock(&gs_jobs);
+    if (gs_jobs[jid] == NULL)
+    {
+        pthread_mutex_unlock(&gs_jobs);
+        return -EINVAL;
+    }
+
+    pthread_rwlock_rdlock(&gs_jobs[jid]->rwlock);
+    
+    p_job_stat->count12 = gs_jobs[jid]->fsm12.comm_count;
+    p_job_stat->count21 = gs_jobs[jid]->fsm21.comm_count;
+    
+    p_job_stat->fd1 = gs_jobs[jid]->fd1;
+    p_job_stat->fd2 = gs_jobs[jid]->fd2;
+    
+    p_job_stat->state = gs_jobs[jid]->job_status;
+
+    p_job_stat->start_tm = gs_jobs[jid]->end_tm;
+    p_job_stat->end_tm = gs_jobs[jid]->end_tm;
+    
+    pthread_rwlock_unlock(&gs_jobs[jid]->rwlock);
+    pthread_mutex_unlock(&gs_jobs);
+
     return 0;
 }
 
 int rel_destory(int jid)
 {
+    int pos = -1;
+    CHECK_JD(jid);
+
+    pthread_mutex_lock(&gs_mut_jobs);
+
+    pthread_rwlock_destroy(&gs_jobs[jid]->rwlock);
+    free(gs_jobs[jid]);
+    gs_jobs[jid] = NULL;
+
+    pthread_mutex_unlock(&gs_mut_jobs);
+
     return 0;
 }
