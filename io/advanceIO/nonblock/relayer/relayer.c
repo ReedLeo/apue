@@ -300,6 +300,7 @@ int rel_cancel(int jid)
         return -EBUSY;
     }
     pcur->job_status = REL_JST_CANCELED;
+    pthread_cond_broadcast(&pcur->con_lcok);
     pthread_mutex_unlock(&pcur->mut_lock);
 
     return 0;
