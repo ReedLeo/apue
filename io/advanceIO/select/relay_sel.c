@@ -152,25 +152,23 @@ static void relay(const int fd1, const int fd2)
     fsm1.status = fsm2.status = FSM_ST_READ;
     
 	nfds = fd2 + 1;
-    while (fsm1.status != FSM_ST_TERM || fsm2.status != FSM_ST_TERM)
+    while (fsm1.statu != FSM_ST_TERM || fsm2.status != FSM_ST_TERM)
     {
 		/* init fd_sets */
 		FD_ZERO(&frdset);
-		FD_SET(fd1, &frdset);
-		FD_SET(fd2, &fwrset);
-		
 		FD_ZERO(&fwrset);
-		FD_SET(fd1, &fwrset);
-		FD_SET(fd2, &fwrset);
+		
+		if (fsm1.status == FSM_ST_READ)
+			FD_SET(fd1, &frdset);
+		if (fsm1.status == FSM_ST_WRITE)
+			FD_SET(fd2, &fwrset);
+		if (fsm2.status == FSM_ST_READ)	
+			FD_SET(fd1, &fwrset);
+		if (fsm2.status == FSM_ST_WRITE)
+			FD_SET(fd2, &fwrset);
    
    		/* select until any of the tow fd is avaliable. */
-   		nfds_ret = select(nfds, &frdset, &fwrset, NULL, NULL);
-		if (nfds_ret < 0) 
-		{
-			perror("select");
-			break; // break to exit
-		}
-  		
+  			
 		if (FD_ISSET(fsm1.fd_src, &frdset) || FD_ISSET(fsm1.fd_dst, &fwrset))	
    			fsm_driver(&fsm1);
 		if (FD_ISSET(fsm2.fd_src, &frdset) || FD_ISSET(fsm2.fd_dst, &fwrset))	
