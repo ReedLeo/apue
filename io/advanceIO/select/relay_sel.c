@@ -121,14 +121,17 @@ static void fsm_driver(struct fsm_st* pfsm)
     }
 }
 
+static int max(int x, int y)
+{
+	return x > y ? x : y;
+}
+
 static void relay(const int fd1, const int fd2)
 {
 	fd_set frdset;
 	fd_set fwrset;
-	int nfds;	
     int saved_flg1, saved_flg2;
     int err = 0;
-	int nfds_ret = 0;
     struct fsm_st fsm1 = {0};
     struct fsm_st fsm2 = {0};
 
@@ -151,24 +154,29 @@ static void relay(const int fd1, const int fd2)
     fsm1.len = fsm1.off = fsm2.len = fsm2.off = 0;
     fsm1.status = fsm2.status = FSM_ST_READ;
     
-	nfds = fd2 + 1;
-    while (fsm1.statu != FSM_ST_TERM || fsm2.status != FSM_ST_TERM)
+    while (fsm1.status != FSM_ST_TERM || fsm2.status != FSM_ST_TERM)
     {
 		/* init fd_sets */
 		FD_ZERO(&frdset);
 		FD_ZERO(&fwrset);
 		
 		if (fsm1.status == FSM_ST_READ)
-			FD_SET(fd1, &frdset);
+			FD_SET(fsm1.fd_src, &frdset);
 		if (fsm1.status == FSM_ST_WRITE)
-			FD_SET(fd2, &fwrset);
+			FD_SET(fsm1.fd_dst, &fwrset);
 		if (fsm2.status == FSM_ST_READ)	
-			FD_SET(fd1, &fwrset);
+			FD_SET(fsm2.fd_src, &frdset);
 		if (fsm2.status == FSM_ST_WRITE)
-			FD_SET(fd2, &fwrset);
+			FD_SET(fsm2.fd_dst, &fwrset);
    
    		/* select until any of the tow fd is avaliable. */
-  			
+  		if (select(max(fd1, fd2) + 1, &frdset, &fwrset, NULL, NULL) < 0)
+		{
+			if (errno == EINTR)
+				continue;
+			perror("select()");
+			exit(EXIT_FAILURE);
+		}
 		if (FD_ISSET(fsm1.fd_src, &frdset) || FD_ISSET(fsm1.fd_dst, &fwrset))	
    			fsm_driver(&fsm1);
 		if (FD_ISSET(fsm2.fd_src, &frdset) || FD_ISSET(fsm2.fd_dst, &fwrset))	
