@@ -9,6 +9,7 @@
 
 struct mypipe_st
 {
+	// queue[head, tail)
 	int head;
 	int tail;
 	char data[PIPESIZE];
@@ -19,17 +20,54 @@ struct mypipe_st
 	pthread_cond_t cond;
 };
 
+static int check_pipe_unlocked(struct mypipe_st* pobj)
+{
+	if (NULL == pobj)
+		return -1;
+	if (pobj->tail < 0 || pobj->tail > PIPESIZE	// max_tail == PIPESIZE
+		|| pobj->head < 0 || pobj->head >= PIPESIZE
+		|| pobj->datasize < 0 || pobj->datasize > PIPESIZE
+		)
+		return -1;
+		
+	return 0;
+}
+
 static int mypipe_readbyte_unlocked(struct mypipe_st* pobj, char* pdata)
 {
 	if (pobj == NULL || pdata == NULL)
 		return -1;
-	*pdata = pobj->data[pobj->head];
-	// need determine whether the pip is empty.
-	pobj->head++;
-	pobj->datasize-- ;
+	if (check_pipe_unlocked(pobj))
+		return -1;
 	
+	if (pobj->datasize == 0)
+		return -1;
+	
+	*pdata = pobj->data[pobj->head];
+	// need determine whether the pipe is empty.
+	pobj->head = (pobj->head + 1) % PIPESIZE;
+	pobj->datasize-- ;
 	return 0;
 }
+
+static int mypipe_writebyte_unlock(struct mypipe_st* pobj, char byte)
+{
+	if (pobj == NULL || pdata == NULL)
+		return -1;
+	
+	if (check_pipe_unlocked(pobj))
+		return -1;
+	
+	if (pobj->datasize == PIPESIZE)
+		return -1;
+	
+	pobj->data[pobj->tail++] = byte;
+	pobj->tail = (pobj->tail > PIPESIZE ? 0 : pobj->tail);
+	pobj->datasize++;
+
+	return 0;
+}
+
 mypipe_t* mypipe_init(void)
 {
 	struct mypipe_st* me = NULL;
@@ -59,6 +97,7 @@ mypipe_t* mypipe_init(void)
 int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 {
 	struct mypipe_st* me = pobj;
+	int i;
 
 	if (me == NULL)
 	{
@@ -68,7 +107,9 @@ int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 
 	// there may be mutilthreads read pipe concurrently.
 	pthread_mutex_lock(&me->mut);
-	for (int i = 0; i < count; ++i)
+	// increase the reader number.
+	++me->count_rd;
+	for (i = 0; i < count; ++i)
 	{
 		// wait until data is available in pipe or no more writers wait for writting.
 		while (me->datasize <= 0 && me->count_wr > 0)
@@ -78,13 +119,33 @@ int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 		// read one byte into buf+i from pipe
 		mypipe_readbyte_unlocked(me, buf+i);
 	}
+	// finished reading, decrease reader number.
+	--me->count_rd;
+	// notify the blocked writers there are space available in pipe.
+	pthread_cond_broadcast(&me->cond);
 	pthread_mutex_unlock(&me->mut);
 	
-	return 0;
+	return i;
 }
 
-int mypipe_write(mypipe_t*, const void* buf, size_t)
+int mypipe_write(mypipe_t* pobj, const void* buf, size_t count)
 {
+	struct mypipe_st* me = pobj;
+	int i;
+
+	if (me == NULL)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	pthread_mutex_lock(&me->mut);
+	++me->count_wr;
+	for (i = 0; i < count; ++i)
+	{
+	}
+	pthread_cond_broadcast(&me->cond);
+	pthread_mutex_unlock(&me->mut);
 	return 0;
 }
 
