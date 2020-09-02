@@ -24,7 +24,7 @@ static int check_pipe_unlocked(struct mypipe_st* pobj)
 {
 	if (NULL == pobj)
 		return -1;
-	if (pobj->tail < 0 || pobj->tail > PIPESIZE	// max_tail == PIPESIZE
+	if (pobj->tail < 0 || pobj->tail >= PIPESIZE
 		|| pobj->head < 0 || pobj->head >= PIPESIZE
 		|| pobj->datasize < 0 || pobj->datasize > PIPESIZE
 		)
@@ -94,6 +94,35 @@ mypipe_t* mypipe_init(void)
 	return me;
 }
 
+
+int mypipe_register(mypipe_t* pobj, int opmap)
+{
+	struct mypipe_st* me = pobj;
+	if (NULL == me)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+	pthread_mutex_lock(&me->mut);
+	if (opmap & MYPIPE_READ)
+		me->count_rd++;
+	if (opmap & MYPIPE_WRITE)
+		me->count_wr++;
+	
+	pthread_broadcast(&me->cond);
+
+	while (me->count_rd <= 0 || me->count_wr <= 9)
+		pthread_cond_wait(&me->cond, &me->mut);
+	
+	pthread_mutex_unlock(&me->mut);
+	return 0;
+}
+
+int mypipe_unregister(mypipe_t*, int opmap)
+{
+	return 0;
+}
+
 int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 {
 	struct mypipe_st* me = pobj;
@@ -107,20 +136,21 @@ int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 
 	// there may be mutilthreads read pipe concurrently.
 	pthread_mutex_lock(&me->mut);
-	// increase the reader number.
-	++me->count_rd;
+	// raeder will register by other function.
 	for (i = 0; i < count; ++i)
 	{
 		// wait until data is available in pipe or no more writers wait for writting.
 		while (me->datasize <= 0 && me->count_wr > 0)
 			pthread_cond_wait(&me->cond, &me->mut);
+		
+		// if there are no more write is waitting and no data in queue
+		// it should quit.
 		if (me->datasize <= 0 && me->count_wr <= 0)
 			break;
 		// read one byte into buf+i from pipe
-		mypipe_readbyte_unlocked(me, buf+i);
+		if (mypipe_readbyte_unlocked(me, buf+i) != 0 )
+			break;
 	}
-	// finished reading, decrease reader number.
-	--me->count_rd;
 	// notify the blocked writers there are space available in pipe.
 	pthread_cond_broadcast(&me->cond);
 	pthread_mutex_unlock(&me->mut);
@@ -140,7 +170,6 @@ int mypipe_write(mypipe_t* pobj, const void* buf, size_t count)
 	}
 
 	pthread_mutex_lock(&me->mut);
-	++me->count_wr;
 	for (i = 0; i < count; ++i)
 	{
 	}
