@@ -50,9 +50,9 @@ static int mypipe_readbyte_unlocked(struct mypipe_st* pobj, char* pdata)
 	return 0;
 }
 
-static int mypipe_writebyte_unlock(struct mypipe_st* pobj, char byte)
+static int mypipe_writebyte_unlock(struct mypipe_st* pobj, const char byte)
 {
-	if (pobj == NULL || pdata == NULL)
+	if (pobj == NULL )
 		return -1;
 	
 	if (check_pipe_unlocked(pobj))
@@ -98,32 +98,67 @@ mypipe_t* mypipe_init(void)
 int mypipe_register(mypipe_t* pobj, int opmap)
 {
 	struct mypipe_st* me = pobj;
-	if (NULL == me)
+	if (NULL == me 
+		|| ((opmap & MYPIPE_READ) == 0 && (opmap & MYPIPE_WRITE) == 0)
+		)
 	{
 		errno = EINVAL;
 		return -1;
 	}
+
 	pthread_mutex_lock(&me->mut);
 	if (opmap & MYPIPE_READ)
 		me->count_rd++;
 	if (opmap & MYPIPE_WRITE)
 		me->count_wr++;
 	
-	pthread_broadcast(&me->cond);
-
-	while (me->count_rd <= 0 || me->count_wr <= 9)
+	pthread_cond_broadcast(&me->cond);
+	// A pipe should have both reader(s) and writer(s).
+	while (me->count_rd <= 0 || me->count_wr <= 0)
 		pthread_cond_wait(&me->cond, &me->mut);
 	
 	pthread_mutex_unlock(&me->mut);
 	return 0;
 }
 
-int mypipe_unregister(mypipe_t*, int opmap)
+int mypipe_unregister(mypipe_t* pobj, int opmap)
 {
+	struct mypipe_st* me = pobj;
+	if (NULL == me 
+		|| ((opmap & MYPIPE_READ) == 0 && (opmap & MYPIPE_WRITE) == 0)
+		)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	pthread_mutex_lock(&me->mut);
+	if (opmap & MYPIPE_READ)
+	{
+		if (me->count_rd <= 0)
+		{
+			pthread_mutex_unlock(&me->mut);
+			errno = EAGAIN;
+			return -1;
+		}
+		me->count_rd--;
+	}
+	if (opmap & MYPIPE_WRITE)
+	{
+		if (me->count_wr <= 0)
+		{
+			pthread_mutex_unlock(&me->mut);
+			errno = EAGAIN;
+			return -1;
+		}
+		me->count_wr--;
+	}	
+
+	pthread_mutex_unlock(&me->mut);
 	return 0;
 }
 
-int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
+int mypipe_read(mypipe_t* pobj, char* const buf, size_t count)
 {
 	struct mypipe_st* me = pobj;
 	int i;
@@ -136,17 +171,22 @@ int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 
 	// there may be mutilthreads read pipe concurrently.
 	pthread_mutex_lock(&me->mut);
+	
+	// wait until data is available in pipe or no more writers wait for writting.
+	while (me->datasize <= 0 && me->count_wr > 0)
+		pthread_cond_wait(&me->cond, &me->mut);
+
+	// if there are no more write is waitting and no data in queue
+	// it should quit.
+	if (me->datasize <= 0 && me->count_wr <= 0)
+	{
+		pthread_mutex_unlock(&me->mut);
+		return 0;
+	}
+	
 	// raeder will register by other function.
 	for (i = 0; i < count; ++i)
 	{
-		// wait until data is available in pipe or no more writers wait for writting.
-		while (me->datasize <= 0 && me->count_wr > 0)
-			pthread_cond_wait(&me->cond, &me->mut);
-		
-		// if there are no more write is waitting and no data in queue
-		// it should quit.
-		if (me->datasize <= 0 && me->count_wr <= 0)
-			break;
 		// read one byte into buf+i from pipe
 		if (mypipe_readbyte_unlocked(me, buf+i) != 0 )
 			break;
@@ -158,7 +198,7 @@ int mypipe_read(mypipe_t* pobj, void* buf, size_t count)
 	return i;
 }
 
-int mypipe_write(mypipe_t* pobj, const void* buf, size_t count)
+int mypipe_write(mypipe_t* pobj, const char* buf, size_t count)
 {
 	struct mypipe_st* me = pobj;
 	int i;
@@ -170,16 +210,44 @@ int mypipe_write(mypipe_t* pobj, const void* buf, size_t count)
 	}
 
 	pthread_mutex_lock(&me->mut);
+	while (me->datasize >= PIPESIZE && me->count_rd > 0)
+		pthread_cond_wait(&me->cond, &me->mut);
+	
+	if (me->datasize >= PIPESIZE || me->count_rd <= 0)
+	{
+		pthread_mutex_unlock(&me->mut);
+	}
+	
 	for (i = 0; i < count; ++i)
 	{
+		if (mypipe_writebyte_unlock(me, buf[i]) != 0)
+			break;
 	}
 	pthread_cond_broadcast(&me->cond);
 	pthread_mutex_unlock(&me->mut);
-	return 0;
+
+	return i;
 }
 
-int mypipe_destory(mypipe_t*)
+int mypipe_destroy(mypipe_t* pobj)
 {
+	struct mypipe_st* me = pobj;
+	if (me == NULL)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+
+	pthread_mutex_lock(&me->mut);
+	
+	pthread_cond_broadcast(&me->cond);
+	pthread_cond_destroy(&me->cond);
+
+	pthread_mutex_unlock(&me->mut);
+	pthread_mutex_destroy(&me->mut);
+	
+	free(pobj);
+
 	return 0;
 }
 
