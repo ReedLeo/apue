@@ -25,8 +25,8 @@ int main(int argc, char** argv)
 	}
 	
 	hint.ai_family = AF_INET;
-	
-	s = getaddrinfo(argv[1], "80", &hint, &pres);
+	hint.ai_socktype = SOCK_STREAM;	
+	s = getaddrinfo(argv[1], NULL, &hint, &pres);
 	if (s != 0)
 	{
 		fprintf(stderr, "getaddrinfo() failed because of \"%s\"\n", gai_strerror(s));
@@ -37,9 +37,9 @@ int main(int argc, char** argv)
 	pcur = pres;
 	for (pcur = pres; pcur; pcur = pcur->ai_next)
 	{
-		if (inet_ntop(pcur->ai_family, &pcur->ai_addr, buf, MAXLEN) == NULL)
+		if ( s = getnameinfo(pcur->ai_addr, pcur->ai_addrlen, buf, MAXLEN, NULL, 0, NI_NUMERICHOST) != 0)
 		{
-			fprintf(stderr, "Unknown addr: \"%s\"\n", strerror(errno));
+			fprintf(stderr, "Unknown addr: \"%s\"\n", gai_strerror(s));
 			exit(1);
 		}
 		printf("%s\n", buf);
