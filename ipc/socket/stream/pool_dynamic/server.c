@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <errno.h>
 
 #include "proto.h"
 
@@ -35,6 +37,11 @@ struct server_st
 };
 
 static struct server_st* server_pool;
+
+static void usr2_handler(int signum)
+{
+	return;
+}
 
 static void do_server_job(int sd, int slot)
 {
@@ -69,6 +76,7 @@ static void do_server_job(int sd, int slot)
 			perror("accept()");
 			break;
 		}
+
 		// Notify parent its state changed.
 		server_pool[slot].state = ST_BUSY;
 		kill(ppid, SIG_USR_NOTIFY);
@@ -76,7 +84,11 @@ static void do_server_job(int sd, int slot)
 		stamp = time(NULL);
 		byte2send = snprintf(linebuf, MAX_LEN_SIZE, FMT_STAMP, (long long)stamp);
 		send(newsd, linebuf,byte2send, 0);
+		
+		sleep(5);
+		close(newsd);
 	}
+	close(sd);
 }
 
 static void init_proc_pool(int sd)
@@ -157,7 +169,9 @@ static int add_1_proc(int sd)
 			break;
 		}
 	}
-	
+	if (free_idx < 0)
+		return -1;
+
 	pid_t pid = fork();
 	if (pid < 0)
 	{
@@ -185,8 +199,25 @@ static void remove_1_idle()
 		{
 			kill(server_pool[i].pid, SIGTERM);
 			server_pool[i].pid = -1;
+			break;
 		}
 	}
+}
+
+static void display_pool()
+{
+	for (int i = 0; i < MAX_POOL_SIZE; ++i)
+	{
+		if (server_pool[i].pid < 0)
+			putchar('-');
+		else if (server_pool[i].state == ST_IDLE)
+			putchar('o');
+		else if (server_pool[i].state == ST_BUSY)
+			putchar('x');
+		else
+			putchar('!');
+	}
+	puts("");
 }
 
 int main(int argc, char** argv)
@@ -194,6 +225,7 @@ int main(int argc, char** argv)
 	int sd = -1;
 	struct sockaddr_in laddr;
 	sigset_t nset, oset;
+	struct sigaction sa, osa;
 
 	// 1st. create socket
 	sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -203,16 +235,7 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 	
-	// 2nd. bind socket
-	laddr.sin_family = AF_INET;
-	laddr.sin_port = htons(atoi(SERVERPORT));
-	laddr.sin_addr.s_addr = inet_addr(INADDR_ANY);
-	if (bind(sd, &laddr, sizeof(laddr)) < 0)
-	{
-		perror("bind()");
-		exit(1);
-	}
-	// 3rd. set reuser socket
+	// 2nd. set reuser socket
 	int val = 1;
 	if (setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) < 0)
 	{
@@ -220,6 +243,15 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	// 3rd. bind socket
+	laddr.sin_family = AF_INET;
+	laddr.sin_port = htons(atoi(SERVERPORT));
+	laddr.sin_addr.s_addr = inet_addr("0.0.0.0");
+	if (bind(sd, &laddr, sizeof(laddr)) < 0)
+	{
+		perror("bind()");
+		exit(1);
+	}
 	// 4th. listen to socket, turn to listening state.
 	if (listen(sd, 200) < 0)
 	{
@@ -227,18 +259,31 @@ int main(int argc, char** argv)
 		exit(1);
 	}
 
+	sigemptyset(&oset);
+	
+	sigemptyset(&sa.sa_mask);
+	sa.sa_handler = SIG_IGN;
+	sa.sa_flags = SA_NOCLDWAIT;
+	sigaction(SIGCHLD, &sa, &osa);
+	
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = 0;
+	sa.sa_handler = usr2_handler;
+	sigaction(SIG_USR_NOTIFY, &sa, &osa);
+
+	sigemptyset(&sa.sa_mask);
+	sigaddset(&sa.sa_mask, SIG_USR_NOTIFY);
+	sigprocmask(SIG_BLOCK, &sa.sa_mask, &oset);
+
+
 	// 5th. create proc pools, do accept and response.
 	init_proc_pool(sd);
-
-	sigemptyset(&oset);
-	sigemptyset(&nset);
-	sigaddset(&nset, SIG_USR_NOTIFY);
-	sigprocmask(SIG_BLOCK, &nset, &oset);
 
 	while (1)
 	{
 		// droved by SIG_NOTIFY		
-		if (sigsuspend(&oset) < 0)
+		// sigsuspend() always return -1, normally errno == EINTR
+		if (sigsuspend(&oset) != -1 || errno != EINTR)
 		{
 			perror("sigsuspend()");
 			exit(1);
@@ -246,7 +291,7 @@ int main(int argc, char** argv)
 	
 		// upadte gs_idle_cnt and gs_busy_cnt
 		scan_pool();
-
+		
 		if (gs_idle_count + gs_busy_count <= MAX_POOL_SIZE)
 		{
 			if (gs_idle_count >= MAX_IDLE_PROC)
@@ -259,7 +304,7 @@ int main(int argc, char** argv)
 					remove_1_idle();
 				}
 			}
-			else if (gs_idle_count <= MIN_IDLE_PROC)
+			else if (gs_idle_count < MIN_IDLE_PROC)
 			{
 				add_1_proc(sd);
 			}	
@@ -269,6 +314,9 @@ int main(int argc, char** argv)
 			perror("Exceeded max pool size");
 			abort();
 		}
+
+		// Test demon
+		display_pool();
 	}
 
 	sigprocmask(SIG_SETMASK, &oset, NULL);

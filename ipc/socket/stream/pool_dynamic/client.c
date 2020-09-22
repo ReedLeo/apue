@@ -57,7 +57,7 @@ int main(int argc, char** argv)
 	}
 	else
 	{
-		fprintf(stdout, FMT_STAMP, stamp);
+		fprintf(stdout, "stamp=" FMT_STAMP, stamp);
 	}
 	
 	fclose(fp);
