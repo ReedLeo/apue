@@ -28,14 +28,15 @@ struct msg_channel_st
 
 struct msg_listentry_st
 {
-	chnid_t chnid
+	chnid_t chnid;
+	uint16_t len;
 	uint8_t desc[1];
 } __attribute__((packed));
 
 struct msg_list_st
 {
 	chnid_t chnid;		/* must be LISTENCHNID */
-	struct msg_listentry_st[1];	
+	struct msg_listentry_st list[1];	
 } __attribute((packed));
 
 #endif
