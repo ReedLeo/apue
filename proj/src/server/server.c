@@ -16,6 +16,9 @@
 
 #include <proto.h>
 #include "server_conf.h"
+#include "medialib.h"
+#include "thr_list.h"
+#include "thr_channel.h"
 
 struct serv_conf_st g_svconf = {
     .rcvport    = DEFAULT_PORT,
@@ -192,7 +195,7 @@ static int init_socket()
 
     inet_pton(AF_INET, g_svconf.mgroup, &mreq.imr_multiaddr);
     // it's equivalent to inet_pton(AF_INET, "0.0.0.0", &mreq.imr_addresss);
-    mreq.imr_address = INADDR_ANY;
+    mreq.imr_address.s_addr = INADDR_ANY;
     mreq.imr_ifindex = if_nametoindex(g_svconf.ifname);
 
     if (setsockopt(sfd, IPPROTO_IP, IP_MULTICAST_IF, &mreq, sizeof(mreq)) < 0) {
@@ -241,18 +244,38 @@ int main(int argc, char** argv)
     */
    sfd = init_socket();
 
-
     /**
      * Get channel information.
     */
+    struct mlib_listentry_st* p_list = NULL;
+    int list_size = 0;
+    int err = 0;
+    err = mlib_getchnlist(&p_list, &list_size);
+    if (err) 
+    {
+        // error handling
+    }
 
    /**
     * Create threads of radio program list.
    */
+    err = thr_list_create(p_list, list_size);
+    if (err)
+    {
+        // error handling
+    }
 
     /**
      * Create threads of channel.
     */
+   int chn_created;
+   for (chn_created = 0; chn_created < list_size; ++chn_created) 
+   {
+       err = thr_channel_create(p_list + chn_created);
+       // error handling
+   }
+
+   syslog(LOG_DEBUG, "%d channel(s) has been created.", chn_created);
 
 	while (1)
 	{
