@@ -28,6 +28,10 @@ struct serv_conf_st g_svconf = {
     .run_mode   = RUN_BACKGROUND
 };
 
+int g_svfd;
+struct sockaddr_in g_svaddr = {0};
+socklen_t g_svaddr_len = 0;
+
 static void print_help(char** argv)
 {
     fprintf(stderr, "Usage: %s\n", argv[0]);
@@ -170,7 +174,7 @@ static void daemon_exit(int signum)
     exit(EXIT_SUCCESS);
 }
 
-static void init()
+static void init(void)
 {
     struct sigaction sa = {0};
     sa.sa_handler = daemon_exit;
@@ -185,31 +189,39 @@ static void init()
 
 }
 
-static int init_socket()
+static void init_socket(void)
 {
-    int sfd = -1;
     struct ip_mreqn mreq = {0};
 
-    sfd = socket(AF_INET, SOCK_DGRAM, 0);
+    g_svfd = socket(AF_INET, SOCK_DGRAM, 0);
     // bind() could be omitted by server.
 
-    inet_pton(AF_INET, g_svconf.mgroup, &mreq.imr_multiaddr);
+    if (inet_pton(AF_INET, g_svconf.mgroup, &mreq.imr_multiaddr) < 1)
+    {
+        syslog(LOG_ERR, "inet_pton() failed. multicast address %s", g_svconf.mgroup);
+        exit(EXIT_FAILURE);
+    }
     // it's equivalent to inet_pton(AF_INET, "0.0.0.0", &mreq.imr_addresss);
     mreq.imr_address.s_addr = INADDR_ANY;
     mreq.imr_ifindex = if_nametoindex(g_svconf.ifname);
 
-    if (setsockopt(sfd, IPPROTO_IP, IP_MULTICAST_IF, &mreq, sizeof(mreq)) < 0) {
+    if (setsockopt(g_svfd, IPPROTO_IP, IP_MULTICAST_IF, &mreq, sizeof(mreq)) < 0) {
         syslog(LOG_ERR, "setsocketopt: join to multicast group failed. %s", strerror(errno));
         exit(EXIT_FAILURE);
     }
 
-    return sfd;
+    g_svaddr.sin_family = AF_INET;
+    g_svaddr.sin_port = htons(atoi(g_svconf.rcvport));
+    if (inet_pton(AF_INET, g_svconf.mgroup, &g_svaddr.sin_addr) < 1)
+    {
+        syslog(LOG_ERR, "inet_pton() failed. multicast address %s", g_svconf.mgroup);
+        exit(EXIT_FAILURE);
+    }
+
 }
 
 int main(int argc, char** argv)
 {
-    int sfd;
-
     init();
 
     openlog(argv[0], LOG_PID, LOG_USER);
@@ -242,7 +254,7 @@ int main(int argc, char** argv)
     /**
     * Initlaize socket
     */
-   sfd = init_socket();
+   g_svfd = init_socket();
 
     /**
      * Get channel information.
@@ -253,7 +265,8 @@ int main(int argc, char** argv)
     err = mlib_getchnlist(&p_list, &list_size);
     if (err) 
     {
-        // error handling
+        syslog(LOG_ERR, "mlib_getchnlist() failed.");
+        exit(EXIT_FAILURE);
     }
 
    /**
@@ -262,7 +275,8 @@ int main(int argc, char** argv)
     err = thr_list_create(p_list, list_size);
     if (err)
     {
-        // error handling
+        syslog(LOG_ERR, "thr_list_create() failed.");
+        exit(EXIT_FAILURE);
     }
 
     /**
@@ -272,14 +286,19 @@ int main(int argc, char** argv)
    for (chn_created = 0; chn_created < list_size; ++chn_created) 
    {
        err = thr_channel_create(p_list + chn_created);
-       // error handling
+       if (err)
+       {
+           syslog(LOG_ERR, "thr_channel_create() failed.");
+           exit(EXIT_FAILURE);
+       }
    }
 
    syslog(LOG_DEBUG, "%d channel(s) has been created.", chn_created);
 
 	while (1)
 	{
-		pause();
+		err = sendto(g_svfd, p_list, list_size*sizeof(*p_list), 0, &g_svaddr, g_svaddr_len);
+        sleep(1);
 	}
     
     return 0;

@@ -8,9 +8,9 @@
 
 typedef void mytbf_t;
 
-mytbf_t* mytbf_init(int cps, int burst);
-int mytbf_fetch_token(mytbf_t*, int);
-int mytbf_return_token(mytbf_t*, int);
-int mytbf_destroy(mytbf_t*);
+mytbf_t* mytbf_init(const size_t cir, const size_t cbs);
+ssize_t mytbf_fetch_token(mytbf_t*, const size_t);
+ssize_t mytbf_return_token(mytbf_t*, const size_t);
+ssize_t mytbf_destroy(mytbf_t*);
 
 #endif
