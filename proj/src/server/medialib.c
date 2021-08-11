@@ -38,6 +38,7 @@ int mlib_getchnlist(struct mlib_listentry_st** pp_list, int* p_list_size)
     int valid_channel_num = 0;
     char path[PATHSIZE] = {0};
     struct mlib_listentry_st* p_list = NULL;
+    struct channel_context_st *p_res = NULL;
     glob_t glob_res;
 
     for (int i = 0; i < MAXCHNID + 1; ++i)
