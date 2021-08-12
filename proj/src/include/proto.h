@@ -29,7 +29,7 @@ struct msg_channel_st
 struct msg_listentry_st
 {
 	chnid_t chnid;
-	uint16_t len;
+	uint16_t len;		/* length of the whole struct msg_list_entry_st */
 	uint8_t desc[1];
 } __attribute__((packed));
 

@@ -5,7 +5,7 @@
 #define DEFAULT_IFNAME      "eth0"
 
 #include <sys/types.h>
-#include <socket.h>
+#include <sys/socket.h>
 
 enum
 {
