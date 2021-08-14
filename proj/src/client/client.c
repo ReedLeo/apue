@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "client.h"
 #include <proto.h>
 
@@ -157,7 +159,7 @@ int main(int argc, char** argv)
 		{
 			close(pd[0]);
 		}
-		execl("/bin/sh", "sh", "-c", client_conf.player_cmd);
+		execl("/bin/sh", "sh", "-c", client_conf.player_cmd, NULL);
 		perror("execute player failed.");
 		exit(EXIT_FAILURE);
 	}
@@ -177,6 +179,7 @@ int main(int argc, char** argv)
 		exit(EXIT_FAILURE);
 	}
 
+	// must set!!
 	svaddr_len = sizeof(svaddr);
 	while (1)
 	{
@@ -197,15 +200,18 @@ int main(int argc, char** argv)
 	// print program list and select channel
 	struct msg_listentry_st *p_ent = NULL;
 	for (p_ent = p_msg_list->list;
-	 (char*)p_ent < (char*)p_msg_list + recv_len;
-	 p_ent = (void*)((char*)p_ent + ntohs(p_ent->len)) )
+	 	(char*)p_ent < (char*)p_msg_list + recv_len;
+	 	p_ent = (void*)((char*)p_ent + ntohs(p_ent->len)) 
+	 )
 	{
 		printf("channel[%d]:%s\n", p_ent->chnid, p_ent->desc);
 	}
 	chnid_t chosen_id = 0;
-	if (1 != scanf("%d\n", &chosen_id) )
+	printf("input the number of channel you want to listen: ");
+	if (1 != scanf("%d", &chosen_id) )
 	{
 		perror("select channel failed.");
+		free(p_msg_list);
 		exit(EXIT_FAILURE);
 	}
 
@@ -223,16 +229,17 @@ int main(int argc, char** argv)
 	while (1)
 	{
 		recv_len = recvfrom(sd, p_msg_channel, MSG_CHANNEL_MAX, 0, (void*)&cl_addr, &cl_addr_len);
-		if (cl_addr.sin_addr.s_addr != svaddr.sin_addr.s_addr
-		|| cl_addr.sin_port != svaddr.sin_port )
-		{
-			fprintf(stderr, "Ignore: address not match.\n");
-			continue;
-		}
 
 		if (recv_len < sizeof(struct msg_channel_st))
 		{
 			fprintf(stderr, "Ignore: message too small.\n");
+			continue;
+		}
+
+		if (cl_addr.sin_addr.s_addr != svaddr.sin_addr.s_addr
+		|| cl_addr.sin_port != svaddr.sin_port )
+		{
+			fprintf(stderr, "Ignore: address not match.\n");
 			continue;
 		}
 
