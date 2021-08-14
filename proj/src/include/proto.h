@@ -14,10 +14,10 @@
 #define MINCHNID			1
 #define MAXCHNID			(MINCHNID + CHNNR - 1)
 
-#define MSG_CHANNEL_MAX		(65536 - 20 - 8) // 20B is IP-header's size, 8B is UDP-header's size
+#define MSG_CHANNEL_MAX		(65535 - 20 - 8) // 20B is IP-header's size, 8B is UDP-header's size
 #define MAX_DATA			(MSG_CHANNEL_MAX - sizeof(chnid_t))
 
-#define MSG_LIST_MAX		(65536 - 20 - 8) 	
+#define MSG_LIST_MAX		(65535 - 20 - 8) 	
 #define MAX_ENTRY			(MSG_LIST_MAX - sizeof(chnid_t))
 
 struct msg_channel_st
