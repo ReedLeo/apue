@@ -9,6 +9,7 @@
 #include <syslog.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
@@ -170,8 +171,14 @@ int become_daemon(int flags)
 
 static void daemon_exit(int signum)
 {
+    thr_list_destory();
+    thr_channel_destoryall();
+    mlib_freechnlist();
+
+    syslog(LOG_INFO, "Signal caught-%d, now exiting...", signum);
     closelog();
-    exit(EXIT_SUCCESS);
+    // exit(EXIT_SUCCESS);
+    _exit(EXIT_SUCCESS);
 }
 
 static void init(void)
@@ -217,6 +224,7 @@ static void init_socket(void)
         syslog(LOG_ERR, "inet_pton() failed. multicast address %s", g_svconf.mgroup);
         exit(EXIT_FAILURE);
     }
+    g_svaddr_len = sizeof(g_svaddr);
 
 }
 
@@ -224,7 +232,7 @@ int main(int argc, char** argv)
 {
     init();
 
-    openlog(argv[0], LOG_PID, LOG_USER);
+    openlog(argv[0], LOG_PID|LOG_PERROR, LOG_USER);
 
     /* Command line analyse. */
     parse_cmdline(argc, argv);
@@ -254,7 +262,7 @@ int main(int argc, char** argv)
     /**
     * Initlaize socket
     */
-   g_svfd = init_socket();
+    init_socket();
 
     /**
      * Get channel information.
@@ -269,36 +277,34 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
 
-   /**
+    /**
+     * Create threads of channel.
+     */
+    int chn_created;
+    for (chn_created = 0; chn_created < list_size; ++chn_created) 
+    {
+        err = thr_channel_create(p_list + chn_created);
+        if (err)
+        {
+            syslog(LOG_ERR, "thr_channel_create() failed.(%s)", strerror(errno));
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    syslog(LOG_DEBUG, "%d channel(s) has been created.", chn_created);
+
+    /**
     * Create threads of radio program list.
-   */
+    */
     err = thr_list_create(p_list, list_size);
     if (err)
     {
-        syslog(LOG_ERR, "thr_list_create() failed.");
+        syslog(LOG_ERR, "thr_list_create() failed. (%s)", strerror(errno));
         exit(EXIT_FAILURE);
     }
-
-    /**
-     * Create threads of channel.
-    */
-   int chn_created;
-   for (chn_created = 0; chn_created < list_size; ++chn_created) 
-   {
-       err = thr_channel_create(p_list + chn_created);
-       if (err)
-       {
-           syslog(LOG_ERR, "thr_channel_create() failed.");
-           exit(EXIT_FAILURE);
-       }
-   }
-
-   syslog(LOG_DEBUG, "%d channel(s) has been created.", chn_created);
-
 	while (1)
 	{
-		err = sendto(g_svfd, p_list, list_size*sizeof(*p_list), 0, &g_svaddr, g_svaddr_len);
-        sleep(1);
+		pause();
 	}
     
     return 0;

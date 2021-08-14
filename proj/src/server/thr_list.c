@@ -54,6 +54,7 @@ int thr_list_create(struct mlib_listentry_st* p_list, int list_size)
 
     // invalid paramters.
     if (NULL == p_list || list_size <= 0) {
+        syslog(LOG_ERR, "In %s(): passed invalid parameter(s).", __func__);
         errno = EINVAL;
         return -1;
     }
@@ -78,7 +79,7 @@ int thr_list_create(struct mlib_listentry_st* p_list, int list_size)
     // copy data to sending buffer.
     for (int i = 0; i < list_size; ++i) {
         p_ent->chnid = p_list[i].chnid;
-        p_ent->len = sizeof(*p_ent) + strlen(p_list[i].desc);
+        p_ent->len = htons(sizeof(*p_ent) + strlen(p_list[i].desc));
         strcpy(p_ent->desc, p_list[i].desc);
         p_ent = (void*)((char*)p_ent + p_ent->len);
     }
